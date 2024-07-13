@@ -1,0 +1,204 @@
+#!/bin/bash
+# shellcheck disable=SC1091
+# shellcheck source=/home/blacksmith/Projects/xfind/src/bin/utility.sh disable=SC1090
+
+# Get the script directory
+SCRIPT_DIR=$(dirname "${BASH_SOURCE[0]}")
+export SCRIPT_PATH="$SCRIPT_DIR/utility.sh"
+
+# source utility.sh
+source "$SCRIPT_PATH" || { echo "Failed to source utility.sh"; exit 1; }
+
+# Exports associative array(s)
+export Color
+export Dictionary
+
+# Declare associative array
+declare -A Utility
+
+# Initialize associative array
+Utility.init() {
+    Utility["root_directory"]="/"
+    Utility["home_directory"]=$HOME
+    Utility["search_data"]="$SCRIPT_DIR/cache/result_data"
+    Utility["search_result"]="$SCRIPT_DIR/cache/result_found"
+    Utility["pattern1"]=""
+    Utility["pattern2"]=""
+
+    Utility["use_auto"]=false
+    Utility["use_root"]=false
+    Utility["input"]=""
+    Utility["search_term"]=''
+}
+
+Utility.parse_options() {
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            -r|--root)
+                Utility["use_root"]=true
+                shift
+                ;;
+            -i|--input)
+                Utility["input"]="$2"
+                shift 2
+                ;;
+            -h|--help)
+                Dictionary.help
+                exit 0
+                ;;
+            -a|--auto)
+                Utility["use_auto"]=true
+                shift
+                ;;
+            -v|--version)
+                Dictionary.version
+                exit 1
+                ;;
+            -*)
+                echo "Invalid option: $1" >&2
+                Dictionary.help
+                exit 1
+                ;;
+            *)
+                Utility["search_term"]="$1"
+                shift                ;;
+        esac
+    done
+}
+
+Utility.amount_of_files() {
+    local count
+    count=$(wc -l < "${Utility["search_result"]}")
+    echo -e "%s   + Number of files found: %s" "${Color["BYellow"]}" "$count${Color["End"]}"
+}
+
+Utility.grep() {
+    export result_file=${Utility["search_result"]}
+    export data_file=${Utility["search_data"]}
+
+    grep -H --color=always -r "${Utility["pattern2"]}" "$data_file" >> "$result_file"
+    
+    if [ ! -s "$result_file" ]; then
+        echo -e "${Color["Red"]}   × No files found with pattern '${Utility["pattern2"]}'${Color["End"]}"
+
+        Utility.main
+    else
+        echo -e "${Color["BYellow"]}   + Number of files containing pattern '${Utility["pattern2"]}': $(wc -l < "$result_file")"
+        echo -e "   + Search results:${Color["End"]}"
+        cat "$result_file"
+
+        Utility.finish
+    fi
+}
+
+Utility.load() {
+    export fill empty progress h_done left amount total count
+    export result_file=${Utility["search_result"]}
+    export data_file=${Utility["search_data"]}
+
+    total=$(find "${Utility["s_dir"]}" -name "${Utility["pattern1"]}" 2>/dev/null | wc -l)
+    count=0
+    
+    show_progress() {
+        progress=$((count * 100 / total))
+        h_done=$((progress * 4 / 10))
+        left=$((40 - h_done))
+        fill=$(printf "%${h_done}s")
+        empty=$(printf "%${left}s")
+        printf "\rProgress: ${Color["Green"]}[${fill// /#}${empty// /-}] ${progress}%%${Color["End"]}"
+    }
+
+    find "${Utility["s_dir"]}" -name "${Utility["pattern1"]}" 2>/dev/null | while read -r file; do
+        echo "$file" >> "$data_file"
+        count=$((count + 1))
+        show_progress
+    done
+
+    printf "\r"
+    printf '%*s' 80 ' '
+    printf "\r\r${Color["BYellow"]}   + Total Unfiltered File Count: [%s]${Color["End"]}\n" "$total"
+
+    Utility.grep
+}
+
+Utility.clear_result() {
+    : > "${Utility["search_result"]}"
+    : > "${Utility["search_data"]}"
+}
+
+Utility.cleanup() {
+    rm -f "${Utility["search_result"]}"
+    rm -f "${Utility["search_data"]}"
+}
+
+Utility.clear_screen() {
+    read -r -p " | Clear console? (y/n: @n as default 'enter'): " input
+    if [[ "$input" == "y" ]]; then
+        clear
+    fi
+}
+
+Utility.finish() {
+    read -r -p " | Clean up? (y/n: @y as default 'enter'): " input
+    if [[ "$input" == "y" || "$input" == "" ]]; then
+        Utility.cleanup
+    fi
+    
+    Utility.clear_screen
+}
+
+Utility.get() { 
+    local input=${Utility["input"]}
+    local term=${Utility["search_term"]}
+    local auto=${Utility["use_auto"]}
+
+    case "$input" in
+        '')
+            if $auto; then
+                Utility["pattern1"]='*.desktop'
+            else
+                read -r -p " | Enter the pattern to search for files (e.g., '*.desktop'): " Utility["pattern1"]
+            fi
+            ;;
+        *)
+            Utility["pattern1"]="*.$input"
+            ;;
+    esac; printf "${Color["Blue"]}» Input: (%s)${Color["End"]}\n" "${Utility["pattern1"]}"
+
+    case "$term" in
+        '')
+            if $auto; then
+                Utility["pattern2"]='studio'
+            else
+                read -r -p " | Enter the pattern to search within the files (e.g., 'studio'): " Utility["pattern2"]
+            fi
+            ;;
+        *)
+            Utility["pattern2"]="$term"
+            ;;
+    esac; printf "${Color["Blue"]}» Input: %s(${Utility["pattern2"]})${Color["End"]}\n"
+
+    printf " § Search directory: %s\n" "${Utility["s_dir"]}"
+    printf " § Dump directory: %s/result_*\n" "$(dirname "$SCRIPT_DIR/cache/")"
+    printf " § Searching for '%s' within '%s'\n" "${Utility["pattern2"]}" "${Utility["pattern1"]}"
+}
+
+Utility.main() {
+    Utility.init
+    Utility.clear_result
+    Utility.parse_options "$@"
+    
+    case ${Utility["use_root"]} in
+        true)
+            Utility["s_dir"]=${Utility["root_directory"]}
+            ;;
+        *)
+            Utility["s_dir"]=${Utility["home_directory"]}
+            ;;
+    esac
+
+    Utility.get
+    Utility.load
+}
+
+Utility.main "$@"
